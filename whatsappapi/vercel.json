@@ -1,0 +1,10 @@
+{
+    "version": 2,
+    "name": "whatsapp-node-api",
+    "builds": [
+      { "src": "api.js", "use": "@vercel/node" }
+    ],
+    "routes": [
+      { "src": "/(.*)", "dest": "/api.js" }
+    ]
+  }

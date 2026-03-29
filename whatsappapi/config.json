@@ -1,0 +1,9 @@
+{
+    "port": 5000,
+    "mongodb_uri": "mongodb://localhost:27017/whatsapp-web-api",
+    "webhook": {
+        "enabled": false,
+        "path": ""
+    },
+    "jwt_secret": "whatsapp_secret_key_2024"
+}

@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp Web API</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <script src="js/qrcode.min.js"></script>
+</head>
+
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <header class="sidebar-header">
+                <div class="user-avatar">
+                    <i class="fas fa-user-circle"></i>
+                </div>
+                <div class="header-actions">
+                    <i class="fas fa-sign-out-alt" name="btn-logout" id="btn-logout" title="Sign Out"></i>
+                    <i class="fas fa-plus" id="btn-new-chat" title="New Chat"></i>
+                    <i class="fas fa-circle-notch"></i>
+                    <i class="fas fa-comment-alt"></i>
+                    <i class="fas fa-ellipsis-v"></i>
+                </div>
+            </header>
+            <div class="search-container">
+                <div class="search-input-wrapper">
+                    <i class="fas fa-search"></i>
+                    <input type="text" id="chat-search" placeholder="Search or start new chat">
+                </div>
+            </div>
+            <div class="chat-list" id="chat-list">
+                <!-- Chat items will be injected here -->
+                <div class="loading-chats">Loading chats...</div>
+            </div>
+        </aside>
+
+        <!-- Main Chat Area -->
+        <main class="chat-area">
+            <div id="no-chat-selected" class="no-chat-selected">
+                <div class="welcome-content">
+                    <img src="https://upload.wikimedia.org/wikipedia/commons/6/6b/WhatsApp.svg" alt="WhatsApp Logo"
+                        width="100">
+                    <h1>WhatsApp Web API</h1>
+                    <p>Select a chat or start a new conversation.</p>
+                </div>
+            </div>
+
+            <div id="active-chat" class="active-chat" style="display: none;">
+                <header class="chat-header">
+                    <div class="chat-info">
+                        <div class="chat-avatar" id="active-chat-avatar">
+                            <i class="fas fa-user-circle"></i>
+                        </div>
+                        <div class="chat-details">
+                            <h2 id="active-chat-name">Contact Name</h2>
+                            <p id="active-chat-about" class="chat-about">About status...</p>
+                            <p id="active-chat-status">online</p>
+                        </div>
+                    </div>
+                    <div class="chat-actions">
+                        <i class="fas fa-thumbtack" id="btn-pin" title="Pin/Unpin chat"></i>
+                        <i class="fas fa-archive" id="btn-archive" title="Archive chat"></i>
+                        <i class="fas fa-volume-mute" id="btn-mute" title="Mute chat"></i>
+                        <i class="fas fa-search"></i>
+                        <i class="fas fa-ellipsis-v"></i>
+                    </div>
+                </header>
+
+                <div class="message-list" id="message-list">
+                    <!-- Messages will be injected here -->
+                </div>
+
+                <footer class="chat-footer">
+                    <div class="attachment-actions">
+                        <button id="btn-attach" title="Attach">
+                            <i class="fas fa-paperclip"></i>
+                        </button>
+                        <div id="attachment-menu" class="attachment-menu" style="display: none;">
+                            <label for="image-input" class="menu-item" title="Send Image">
+                                <i class="fas fa-image"></i>
+                                <input type="file" id="image-input" accept="image/*" style="display: none;">
+                            </label>
+                            <label for="video-input" class="menu-item" title="Send Video">
+                                <i class="fas fa-video"></i>
+                                <input type="file" id="video-input" accept="video/mp4" style="display: none;">
+                            </label>
+                        </div>
+                    </div>
+                    <div class="input-wrapper">
+                        <input type="text" id="message-input" placeholder="Type a message">
+                    </div>
+                    <button id="btn-send" class="btn-send">
+                        <i class="fas fa-paper-plane"></i>
+                    </button>
+                </footer>
+            </div>
+        </main>
+    </div>
+
+    <!-- Context Menu for Messages -->
+    <div id="message-context-menu" class="context-menu" style="display: none;">
+        <div class="menu-item" id="ctx-react">
+            <i class="fas fa-smile"></i> React
+            <div id="reaction-picker" class="reaction-picker" style="display: none;">
+                <span>👍</span><span>❤️</span><span>😂</span><span>😮</span><span>😢</span><span>🙏</span>
+            </div>
+        </div>
+        <div class="menu-item" id="ctx-delete"><i class="fas fa-trash"></i> Delete</div>
+        <div class="menu-item" id="ctx-info"><i class="fas fa-info-circle"></i> Info</div>
+    </div>
+
+    <!-- New Chat Modal -->
+    <div id="new-chat-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <header class="modal-header">
+                <h3>Start New Chat</h3>
+                <span class="close-new-chat-modal" id="close-new-chat">&times;</span>
+            </header>
+            <div class="modal-body" style="padding: 20px;">
+                <input type="text" id="new-chat-phone" placeholder="Enter phone number (e.g., 85620xxx)"
+                    style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px; outline: none;">
+                <p id="new-chat-error" style="color: red; font-size: 13px; margin-top: 10px; display: none;"></p>
+            </div>
+            <div class="modal-footer">
+                <button id="btn-start-new-chat">Start Chat</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Logout Confirmation Modal -->
+    <div id="logout-confirm-modal" class="modal" style="display: none; z-index: 2100;">
+        <div class="modal-content" style="max-width: 400px; text-align: center;">
+            <header class="modal-header">
+                <h3>Confirm Sign Out</h3>
+            </header>
+            <div class="modal-body" style="padding: 20px;">
+                <p>Are you sure you want to sign out? This will clear all WhatsApp data and reset the session.</p>
+            </div>
+            <div class="modal-footer" style="display: flex; justify-content: space-around; padding: 15px;">
+                <button id="btn-cancel-logout" class="btn-secondary">Cancel</button>
+                <button id="btn-confirm-logout" class="btn-danger" style="background-color: var(--danger-color, #f44336); color: white; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer;">Sign Out</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modals or Overlays -->
+    <div id="media-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <header class="modal-header">
+                <h3>Preview Media</h3>
+                <span class="close-modal" id="close-modal">&times;</span>
+            </header>
+            <div class="preview-container" id="preview-container">
+                <!-- Preview image or video here -->
+            </div>
+            <div class="modal-footer">
+                <input type="text" id="media-caption" placeholder="Add a caption...">
+                <button id="btn-send-media">Send</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Auth Overlay -->
+    <div id="auth-overlay" class="modal" style="display: none; z-index: 2000;">
+        <div class="modal-content" style="max-width: 400px; text-align: center;">
+            <header class="modal-header">
+                <h3>WhatsApp Login</h3>
+            </header>
+            <div class="modal-body" style="padding: 30px;">
+                <p style="margin-bottom: 20px; color: var(--text-secondary);">Open WhatsApp on your phone and scan this
+                    code to login.</p>
+                <div id="auth-qrcode"
+                    style="display: flex; justify-content: center; margin-bottom: 20px; background: white; padding: 10px; border-radius: 8px;">
+                </div>
+                <div id="auth-status" style="font-size: 14px; color: var(--accent-color);">
+                    <i class="fas fa-spinner fa-spin"></i> Initializing WhatsApp...
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+
+</html>
