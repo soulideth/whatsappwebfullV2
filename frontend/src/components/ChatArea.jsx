@@ -51,7 +51,7 @@ const MediaPreview = ({ msgId, onOpenModal }) => {
   return <a href={src} download={media.filename || 'file'} className="file-download-link"><i className="fas fa-file-download"></i> Download {media.filename || 'File'}</a>;
 };
 
-const ChatArea = ({ activeChat, onChatsUpdate, presence, onPresenceUpdate, socket }) => {
+const ChatArea = ({ activeChat, onChatsUpdate, presence, onPresenceUpdate, socket, user, internalMessages, onInternalLoadMore, groupOnlineUsers }) => {
   const [messages, setMessages] = useState([]);
   const [messageInput, setMessageInput] = useState('');
   const [about, setAbout] = useState('');
@@ -65,6 +65,7 @@ const ChatArea = ({ activeChat, onChatsUpdate, presence, onPresenceUpdate, socke
   const [contextMenu, setContextMenu] = useState(null);
   const [editingMessage, setEditingMessage] = useState(null);
   const [limit, setLimit] = useState(50);
+  const [internalLimit, setInternalLimit] = useState(50);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -75,9 +76,10 @@ const ChatArea = ({ activeChat, onChatsUpdate, presence, onPresenceUpdate, socke
   const recordingTimerRef = useRef(null);
   const messageListRef = useRef(null);
   const [showContactProfileModal, setShowContactProfileModal] = useState(false);
+  const [showOnlineMembersModal, setShowOnlineMembersModal] = useState(false);
 
   const fetchMessages = async (currentLimit = limit) => {
-    if (!activeChat) return;
+    if (!activeChat || activeChat.isInternal) return;
     setIsChatLoading(true);
     try {
       const { data } = await api.get(`/chat/getchatbyid/${activeChat.id}?limit=${currentLimit}`);
@@ -92,7 +94,7 @@ const ChatArea = ({ activeChat, onChatsUpdate, presence, onPresenceUpdate, socke
   };
 
   const fetchMetadata = async () => {
-    if (!activeChat) return;
+    if (!activeChat || activeChat.isInternal) return;
     try {
       const aboutRes = await api.get(`/chat/getabout/${activeChat.id}`);
       if (aboutRes.data.status === 'success') setAbout(aboutRes.data.message);
@@ -109,9 +111,9 @@ const ChatArea = ({ activeChat, onChatsUpdate, presence, onPresenceUpdate, socke
       try {
         const contactRes = await api.get(`/chat/getcontact/${activeChat.id}`);
         if (contactRes.data.status === 'success' && contactRes.data.message) {
-            setRealPhoneNumber(contactRes.data.message.number || null);
+          setRealPhoneNumber(contactRes.data.message.number || null);
         } else {
-            setRealPhoneNumber(null);
+          setRealPhoneNumber(null);
         }
       } catch (e) {
         setRealPhoneNumber(null);
@@ -156,6 +158,17 @@ const ChatArea = ({ activeChat, onChatsUpdate, presence, onPresenceUpdate, socke
     if (!messageInput.trim() || !activeChat) return;
     const msgBody = messageInput;
     setMessageInput('');
+
+    if (activeChat.isInternal) {
+      if (socket) {
+        socket.emit('send_internal_message', {
+          userId: user.userId,
+          username: user.username,
+          body: msgBody
+        });
+      }
+      return;
+    }
 
     try {
       if (editingMessage) {
@@ -224,7 +237,7 @@ const ChatArea = ({ activeChat, onChatsUpdate, presence, onPresenceUpdate, socke
   };
 
   const sendVoiceMessage = () => {
-      const recorder = mediaRecorderRef.current;
+    const recorder = mediaRecorderRef.current;
     if (!recorder) return;
     setIsSendingVoice(true);
     recorder.onstop = async () => {
@@ -295,8 +308,11 @@ const ChatArea = ({ activeChat, onChatsUpdate, presence, onPresenceUpdate, socke
   useEffect(() => {
     if (activeChat) {
       setLimit(50);
-      fetchMessages(limit);
-      fetchMetadata();
+      setInternalLimit(50);
+      if (!activeChat.isInternal) {
+        fetchMessages(limit);
+        fetchMetadata();
+      }
 
       // Use shared socket
       if (socket) {
@@ -351,7 +367,7 @@ const ChatArea = ({ activeChat, onChatsUpdate, presence, onPresenceUpdate, socke
       }
       setIsLoadingMore(false);
     }
-  }, [messages]);
+  }, [messages, internalMessages]);
 
   if (!activeChat) {
     return (
@@ -373,87 +389,153 @@ const ChatArea = ({ activeChat, onChatsUpdate, presence, onPresenceUpdate, socke
         <header className="chat-header">
           <div className="chat-info">
             <i className="fas fa-arrow-left back-button" onClick={() => onChatsUpdate(null)}></i>
-            <div className="chat-avatar" onClick={() => setShowContactProfileModal(true)} style={{ cursor: 'pointer' }} title="View Contact Info">
-              {avatar ? <img src={avatar} style={{ width: 40, height: 40, borderRadius: '50%' }} /> : <i className="fas fa-user-circle"></i>}
-              {presence[activeChat.id] === 'online' && <div className="status-online-dot header-dot"></div>}
-            </div>
-            <div className="chat-details" onClick={() => setShowContactProfileModal(true)} style={{ cursor: 'pointer' }} title="View Contact Info">
-              <h2 style={{ margin: 0, transition: 'color 0.2s' }} onMouseEnter={(e) => e.currentTarget.style.color = '#e9edef'} onMouseLeave={(e) => e.currentTarget.style.color = 'inherit'}>
+            {activeChat.isInternal ? (
+              <div
+                className="chat-avatar"
+                onClick={() => setShowOnlineMembersModal(true)}
+                style={{ background: '#25D366', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '20px', cursor: 'pointer' }}
+                title="View Online Members"
+              >
+                <i className="fas fa-users-cog"></i>
+              </div>
+            ) : (
+              <div className="chat-avatar" onClick={() => setShowContactProfileModal(true)} style={{ cursor: 'pointer' }} title="View Contact Info">
+                {avatar ? <img src={avatar} style={{ width: 40, height: 40, borderRadius: '50%' }} /> : <i className="fas fa-user-circle"></i>}
+                {presence[activeChat.id] === 'online' && <div className="status-online-dot header-dot"></div>}
+              </div>
+            )}
+            <div
+              className="chat-details"
+              onClick={() => {
+                if (activeChat.isInternal) {
+                  setShowOnlineMembersModal(true);
+                } else {
+                  setShowContactProfileModal(true);
+                }
+              }}
+              style={{ cursor: 'pointer' }}
+              title={activeChat.isInternal ? "View Online Members" : "View Contact Info"}
+            >
+              <h2 style={{ margin: 0 }}>
                 {activeChat.name || (realPhoneNumber ? `+${realPhoneNumber}` : `+${activeChat.phoneNumber.split('-')[0]}`)}
               </h2>
               <div className="status-wrapper">
-                {presence[activeChat.id] && presence[activeChat.id] !== 'offline' ? (
-                  <span className={`status-text ${presence[activeChat.id]}`}>{presence[activeChat.id]}</span>
+                {activeChat.isInternal ? (
+                  <p className="chat-about">{groupOnlineUsers?.length || 0} Online</p>
                 ) : (
-                  <p className="chat-about">{activeChat.isGroup ? 'group' : about}</p>
+                  presence[activeChat.id] && presence[activeChat.id] !== 'offline' ? (
+                    <span className={`status-text ${presence[activeChat.id]}`}>{presence[activeChat.id]}</span>
+                  ) : (
+                    <p className="chat-about">{activeChat.isGroup ? 'group' : about}</p>
+                  )
                 )}
               </div>
             </div>
           </div>
           <div className="chat-actions">
-            <i className="fas fa-thumbtack"></i>
-            <i className="fas fa-archive"></i>
-            <i className="fas fa-volume-mute"></i>
+            {!activeChat.isInternal && (
+              <>
+                <i className="fas fa-thumbtack"></i>
+                <i className="fas fa-archive"></i>
+                <i className="fas fa-volume-mute"></i>
+              </>
+            )}
             <i className="fas fa-search"></i>
           </div>
         </header>
 
         <div className="message-list" ref={messageListRef}>
-          {isChatLoading && (
-            <div className="loading-chat" style={{ textAlign: 'center', padding: '15px', color: '#8696a0', fontSize: '14px' }}>
-              <i className="fas fa-spinner fa-spin" style={{ marginRight: '8px' }}></i> Loading chats...
-            </div>
-          )}
-          {!isChatLoading && messages.length > 0 && (
-            <div className="load-more-container" style={{ textAlign: 'center', padding: '15px' }}>
-              <button
-                onClick={() => {
-                  setIsLoadingMore(true);
-                  const newLimit = limit + 50;
-                  setLimit(newLimit);
-                  fetchMessages(newLimit);
-                }}
-                className="btn-primary"
-                style={{ fontSize: '13px', padding: '6px 16px', borderRadius: '15px', border: 'none', cursor: 'pointer', background: '#e9edef', color: '#54656f', fontWeight: 500 }}
-              >
-                Load Older Messages
-              </button>
-            </div>
-          )}
-          {messages.map(msg => (
-            <div
-              key={msg.id._serialized}
-              className={`message ${msg.fromMe ? 'sent' : 'received'}`}
-              onContextMenu={(e) => onContextMenu(e, msg)}
-            >
-              {msg.hasMedia && (
-                <MediaPreview
-                  msgId={msg.id._serialized}
-                  onOpenModal={(media) => {
-                    setSelectedMedia(media);
-                  }}
-                />
+          {activeChat.isInternal ? (
+            <>
+              {internalMessages.length > 0 && (
+                <div className="load-more-container" style={{ textAlign: 'center', padding: '15px' }}>
+                  <button
+                    onClick={() => {
+                      setIsLoadingMore(true);
+                      const newLimit = internalLimit + 50;
+                      setInternalLimit(newLimit);
+                      onInternalLoadMore(newLimit);
+                    }}
+                    className="btn-primary"
+                    style={{ fontSize: '13px', padding: '6px 16px', borderRadius: '15px', border: 'none', cursor: 'pointer', background: '#e9edef', color: '#54656f', fontWeight: 500 }}
+                  >
+                    Load Older Messages
+                  </button>
+                </div>
               )}
-              <div className="message-text">
-                {msg.body}
-                {msg.hasReaction && msg.reactions && (
-                  <div className="reactions-list">
-                    {msg.reactions.map((reaction, i) => (
-                      <span key={i}>{reaction}</span>
-                    ))}
+              {internalMessages.map(msg => (
+                <div key={msg._id} className={`message ${msg.senderId === user.userId ? 'sent' : 'received'}`}>
+                  <div className="message-sender" style={{ fontSize: '12px', fontWeight: 'bold', color: '#25D366', marginBottom: '2px' }}>
+                    {msg.senderName}
                   </div>
-                )}
-              </div>
-              <div className="message-time">
-                {msg.timestamp.split(' ')[1]?.substring(0, 5)}
-                {msg.fromMe && (
-                  <span className={`message-status ${msg.ack === 3 ? 'status-read' : 'status-unread'}`}>
-                    <i className={`fas ${msg.ack >= 2 ? 'fa-check-double' : 'fa-check'}`}></i>
-                  </span>
-                )}
-              </div>
-            </div>
-          ))}
+                  <div className="message-text">
+                    {msg.body}
+                  </div>
+                  <div className="message-time">
+                    {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </div>
+                </div>
+              ))}
+            </>
+          ) : (
+            <>
+              {isChatLoading && (
+                <div className="loading-chat" style={{ textAlign: 'center', padding: '15px', color: '#8696a0', fontSize: '14px' }}>
+                  <i className="fas fa-spinner fa-spin" style={{ marginRight: '8px' }}></i> Loading chats...
+                </div>
+              )}
+              {!isChatLoading && messages.length > 0 && (
+                <div className="load-more-container" style={{ textAlign: 'center', padding: '15px' }}>
+                  <button
+                    onClick={() => {
+                      setIsLoadingMore(true);
+                      const newLimit = limit + 50;
+                      setLimit(newLimit);
+                      fetchMessages(newLimit);
+                    }}
+                    className="btn-primary"
+                    style={{ fontSize: '13px', padding: '6px 16px', borderRadius: '15px', border: 'none', cursor: 'pointer', background: '#e9edef', color: '#54656f', fontWeight: 500 }}
+                  >
+                    Load Older Messages
+                  </button>
+                </div>
+              )}
+              {messages.map(msg => (
+                <div
+                  key={msg.id._serialized}
+                  className={`message ${msg.fromMe ? 'sent' : 'received'}`}
+                  onContextMenu={(e) => onContextMenu(e, msg)}
+                >
+                  {msg.hasMedia && (
+                    <MediaPreview
+                      msgId={msg.id._serialized}
+                      onOpenModal={(media) => {
+                        setSelectedMedia(media);
+                      }}
+                    />
+                  )}
+                  <div className="message-text">
+                    {msg.body}
+                    {msg.hasReaction && msg.reactions && (
+                      <div className="reactions-list">
+                        {msg.reactions.map((reaction, i) => (
+                          <span key={i}>{reaction}</span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="message-time">
+                    {msg.timestamp.split(' ')[1]?.substring(0, 5)}
+                    {msg.fromMe && (
+                      <span className={`message-status ${msg.ack === 3 ? 'status-read' : 'status-unread'}`}>
+                        <i className={`fas ${msg.ack >= 2 ? 'fa-check-double' : 'fa-check'}`}></i>
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
         </div>
 
         <footer className="chat-footer">
@@ -463,21 +545,23 @@ const ChatArea = ({ activeChat, onChatsUpdate, presence, onPresenceUpdate, socke
               <i className="fas fa-times" onClick={() => { setEditingMessage(null); setMessageInput(''); }}></i>
             </div>
           )}
-          <div className="attachment-actions">
-            <button onClick={() => setShowAttachMenu(!showAttachMenu)}><i className="fas fa-paperclip"></i></button>
-            {showAttachMenu && (
-              <div className="attachment-menu" style={{ display: 'flex' }}>
-                <label className="menu-item" style={{ background: '#bf59cf' }}>
-                  <i className="fas fa-image"></i>
-                  <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => handleMediaSelect(e, 'image')} />
-                </label>
-                <label className="menu-item" style={{ background: '#eb4034' }}>
-                  <i className="fas fa-video"></i>
-                  <input type="file" accept="video/mp4" style={{ display: 'none' }} onChange={(e) => handleMediaSelect(e, 'video')} />
-                </label>
-              </div>
-            )}
-          </div>
+          {!activeChat.isInternal && (
+            <div className="attachment-actions">
+              <button onClick={() => setShowAttachMenu(!showAttachMenu)}><i className="fas fa-paperclip"></i></button>
+              {showAttachMenu && (
+                <div className="attachment-menu" style={{ display: 'flex' }}>
+                  <label className="menu-item" style={{ background: '#bf59cf' }}>
+                    <i className="fas fa-image"></i>
+                    <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => handleMediaSelect(e, 'image')} />
+                  </label>
+                  <label className="menu-item" style={{ background: '#eb4034' }}>
+                    <i className="fas fa-video"></i>
+                    <input type="file" accept="video/mp4" style={{ display: 'none' }} onChange={(e) => handleMediaSelect(e, 'video')} />
+                  </label>
+                </div>
+              )}
+            </div>
+          )}
           {isRecording ? (
             <div className="recording-ui" style={{ display: 'flex', alignItems: 'center', flex: 1, gap: '12px', padding: '0 8px' }}>
               <button
@@ -531,8 +615,15 @@ const ChatArea = ({ activeChat, onChatsUpdate, presence, onPresenceUpdate, socke
                   onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
                 />
               </div>
-              {messageInput.trim() ? (
-                <button className="btn-send" onClick={handleSendMessage}><i className="fas fa-paper-plane"></i></button>
+              {messageInput.trim() || activeChat.isInternal ? (
+                <button
+                  className="btn-send"
+                  onClick={handleSendMessage}
+                  disabled={!messageInput.trim()}
+                  style={{ opacity: messageInput.trim() ? 1 : 0.5, cursor: messageInput.trim() ? 'pointer' : 'default' }}
+                >
+                  <i className="fas fa-paper-plane"></i>
+                </button>
               ) : (
                 <button className="btn-send" onClick={startRecording} title="Record voice message"><i className="fas fa-microphone"></i></button>
               )}
@@ -582,59 +673,88 @@ const ChatArea = ({ activeChat, onChatsUpdate, presence, onPresenceUpdate, socke
             </header>
             <div className="modal-body" style={{ padding: '0' }}>
               <div style={{ padding: '30px 20px', textAlign: 'center', background: 'var(--panel-header-bg)' }}>
-                  {avatar ? (
-                      <img src={avatar} style={{ width: '150px', height: '150px', borderRadius: '50%', objectFit: 'cover', border: '4px solid var(--accent-color)', boxShadow: '0 4px 12px rgba(0,0,0,0.15)' }} alt="Profile" />
-                  ) : (
-                      <i className="fas fa-user-circle" style={{ fontSize: '120px', color: '#8696a0' }}></i>
-                  )}
-                  <h2 style={{ margin: '15px 0 5px 0', fontSize: '22px', color: 'var(--text-primary)' }}>{activeChat.name || (realPhoneNumber ? `+${realPhoneNumber}` : `+${activeChat.phoneNumber.split('-')[0]}`)}</h2>
-                  
-                  {activeChat.isGroup && (
-                      <span style={{ display: 'inline-block', marginTop: '12px', background: 'var(--panel-color-hover)', color: 'var(--text-primary)', padding: '6px 14px', borderRadius: '15px', fontSize: '13px', fontWeight: 'bold' }}>
-                          <i className="fas fa-users" style={{marginRight: '6px'}}></i> WhatsApp Group
-                      </span>
-                  )}
-              </div>
-              
-              <div style={{ padding: '20px' }}>
-                  <h4 style={{ margin: '0 0 10px 0', color: '#25D366' }}><i className="fas fa-address-book"></i> Profile Details</h4>
-                  <div style={{ background: 'var(--panel-color-hover)', padding: '16px', borderRadius: '8px', color: 'var(--text-primary)', marginBottom: '20px' }}>
-                      <p style={{ margin: '0 0 10px 0', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '10px' }}>
-                          <strong>Contact Name:</strong> <span style={{ float: 'right' }}>{activeChat.name || 'Unknown'}</span>
-                      </p>
-                      <p style={{ margin: 0 }}>
-                          <strong>{activeChat.isGroup ? "Group ID:" : (activeChat.id.includes('@broadcast') ? "Broadcast ID:" : "Phone Number:")}</strong> 
-                          <span style={{ float: 'right', fontFamily: 'monospace', color: 'var(--text-secondary)' }}>
-                              {activeChat.isGroup ? activeChat.phoneNumber.split('-')[0] : (activeChat.id.includes('@broadcast') ? activeChat.phoneNumber : (realPhoneNumber ? `+${realPhoneNumber}` : `+${activeChat.phoneNumber}`))}
-                          </span>
-                      </p>
-                  </div>
+                {avatar ? (
+                  <img src={avatar} style={{ width: '150px', height: '150px', borderRadius: '50%', objectFit: 'cover', border: '4px solid var(--accent-color)', boxShadow: '0 4px 12px rgba(0,0,0,0.15)' }} alt="Profile" />
+                ) : (
+                  <i className="fas fa-user-circle" style={{ fontSize: '120px', color: '#8696a0' }}></i>
+                )}
+                <h2 style={{ margin: '15px 0 5px 0', fontSize: '22px', color: 'var(--text-primary)' }}>{activeChat.name || (realPhoneNumber ? `+${realPhoneNumber}` : `+${activeChat.phoneNumber.split('-')[0]}`)}</h2>
 
-                  <h4 style={{ margin: '0 0 10px 0', color: '#25D366' }}><i className="fas fa-info-circle"></i> About</h4>
-                  <div style={{ background: 'var(--panel-color-hover)', padding: '16px', borderRadius: '8px', color: 'var(--text-primary)' }}>
-                      {about ? (
-                          <p style={{ margin: 0, lineHeight: '1.5', whiteSpace: 'pre-wrap' }}>{about}</p>
-                      ) : (
-                          <p style={{ margin: 0, fontStyle: 'italic', color: 'var(--text-secondary)' }}>Hey there! I am using WhatsApp.</p>
-                      )}
-                  </div>
-                  
-                  <h4 style={{ margin: '20px 0 10px 0', color: 'var(--text-secondary)' }}><i className="fas fa-wifi"></i> Status</h4>
-                  <div style={{ background: 'var(--panel-color-hover)', padding: '16px', borderRadius: '8px', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                      <span style={{ 
-                          width: '12px', height: '12px', borderRadius: '50%', 
-                          background: presence[activeChat.id] && presence[activeChat.id] !== 'offline' ? '#25D366' : '#8696a0',
-                          boxShadow: presence[activeChat.id] && presence[activeChat.id] !== 'offline' ? '0 0 8px #25D366' : 'none'
-                      }}></span>
-                      <span style={{ fontSize: '15px', fontWeight: '500' }}>
-                          {presence[activeChat.id] && presence[activeChat.id] !== 'offline' ? 'Online' : 'Offline'}
-                      </span>
-                  </div>
+                {activeChat.isGroup && (
+                  <span style={{ display: 'inline-block', marginTop: '12px', background: 'var(--panel-color-hover)', color: 'var(--text-primary)', padding: '6px 14px', borderRadius: '15px', fontSize: '13px', fontWeight: 'bold' }}>
+                    <i className="fas fa-users" style={{ marginRight: '6px' }}></i> WhatsApp Group
+                  </span>
+                )}
+              </div>
+
+              <div style={{ padding: '20px' }}>
+                <h4 style={{ margin: '0 0 10px 0', color: '#25D366' }}><i className="fas fa-address-book"></i> Profile Details</h4>
+                <div style={{ background: 'var(--panel-color-hover)', padding: '16px', borderRadius: '8px', color: 'var(--text-primary)', marginBottom: '20px' }}>
+                  <p style={{ margin: '0 0 10px 0', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '10px' }}>
+                    <strong>Contact Name:</strong> <span style={{ float: 'right' }}>{activeChat.name || 'Unknown'}</span>
+                  </p>
+                  <p style={{ margin: 0 }}>
+                    <strong>{activeChat.isGroup ? "Group ID:" : (activeChat.id.includes('@broadcast') ? "Broadcast ID:" : "Phone Number:")}</strong>
+                    <span style={{ float: 'right', fontFamily: 'monospace', color: 'var(--text-secondary)' }}>
+                      {activeChat.isGroup ? activeChat.phoneNumber.split('-')[0] : (activeChat.id.includes('@broadcast') ? activeChat.phoneNumber : (realPhoneNumber ? `+${realPhoneNumber}` : `+${activeChat.phoneNumber}`))}
+                    </span>
+                  </p>
+                </div>
+
+                <h4 style={{ margin: '0 0 10px 0', color: '#25D366' }}><i className="fas fa-info-circle"></i> About</h4>
+                <div style={{ background: 'var(--panel-color-hover)', padding: '16px', borderRadius: '8px', color: 'var(--text-primary)' }}>
+                  {about ? (
+                    <p style={{ margin: 0, lineHeight: '1.5', whiteSpace: 'pre-wrap' }}>{about}</p>
+                  ) : (
+                    <p style={{ margin: 0, fontStyle: 'italic', color: 'var(--text-secondary)' }}>Hey there! I am using WhatsApp.</p>
+                  )}
+                </div>
+
+                <h4 style={{ margin: '20px 0 10px 0', color: 'var(--text-secondary)' }}><i className="fas fa-wifi"></i> Status</h4>
+                <div style={{ background: 'var(--panel-color-hover)', padding: '16px', borderRadius: '8px', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <span style={{
+                    width: '12px', height: '12px', borderRadius: '50%',
+                    background: presence[activeChat.id] && presence[activeChat.id] !== 'offline' ? '#25D366' : '#8696a0',
+                    boxShadow: presence[activeChat.id] && presence[activeChat.id] !== 'offline' ? '0 0 8px #25D366' : 'none'
+                  }}></span>
+                  <span style={{ fontSize: '15px', fontWeight: '500' }}>
+                    {presence[activeChat.id] && presence[activeChat.id] !== 'offline' ? 'Online' : 'Offline'}
+                  </span>
+                </div>
               </div>
             </div>
           </div>
         </div>
       )}
+      {/* Online Group Members Modal */}
+      {showOnlineMembersModal && (
+        <div className="modal" onClick={() => setShowOnlineMembersModal(false)} style={{ zIndex: 2000 }}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '400px' }}>
+            <div className="modal-header">
+              <h3><i className="fas fa-users" style={{ marginRight: '10px', color: '#25D366' }}></i> Online Members</h3>
+              <i className="fas fa-times close-icon" onClick={() => setShowOnlineMembersModal(false)}></i>
+            </div>
+            <div className="modal-body" style={{ maxHeight: '300px', overflowY: 'auto', gap: 5 }}>
+              {groupOnlineUsers && groupOnlineUsers.length > 0 ? (
+                <div className="online-list" style={{ padding: 5 }} >
+                  {groupOnlineUsers.map((username, index) => (
+                    <div key={index} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 0', borderBottom: '1px solid var(--border-color)' }}>
+                      <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: '#e9edef', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#54656f' }}>
+                        <i className="fas fa-user"></i>
+                      </div>
+                      <div style={{ flex: 1, fontWeight: '500' }}>{username} {username === user.username && <span style={{ color: '#8696a0', fontSize: '12px' }}>(You)</span>}</div>
+                      <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#25D366' }}></div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p style={{ textAlign: 'center', color: '#8696a0', padding: '20px 0' }}>No members currently online.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
     </main>
   );
 };

@@ -22,6 +22,10 @@ const GroupSchema = new mongoose.Schema({
     type: Date,
     default: Date.now,
   },
+  folders: [{
+    name: { type: String, required: true },
+    chats: [{ type: String }] // Array of chat IDs
+  }]
 });
 
 module.exports = mongoose.model("Group", GroupSchema);

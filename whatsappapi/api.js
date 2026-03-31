@@ -13,6 +13,9 @@ const { Server } = require("socket.io");
 const path = require("path");
 const config = require("./config.json");
 const Group = require("./models/Group");
+const User = require("./models/User");
+const InternalMessage = require("./models/InternalMessage");
+const internal = require("./components/internal");
 
 process.title = "whatsapp-web-api";
 
@@ -225,20 +228,75 @@ mongoose.connect(MONGODB_URI).then(async () => {
   const io = new Server(server, {
     cors: { origin: "*", methods: ["GET", "POST"] }
   });
-
+  global.io = io;
   global.clientManager = new ClientManager(io, store);
+
+  // Socket storage for tracking online users
+  const onlineUsers = {}; // socketId -> { groupId, username }
 
   io.on("connection", (socket) => {
     console.log("A user connected:", socket.id);
-    socket.on("join_group", (groupId) => {
+
+    socket.on("join_group", (payload) => {
+      // Compatibility for legacy string groupId or new payload object
+      const data = typeof payload === 'string' ? { groupId: payload } : payload;
+      const { groupId, username } = data;
+
       if (!groupId || groupId === "null" || groupId === "undefined") {
         console.warn("Socket join attempted with invalid groupId:", groupId);
         return;
       }
+
       socket.join(groupId);
-      console.log(`Socket ${socket.id} joined group ${groupId}`);
+      console.log(`Socket ${socket.id} (${username || 'anonymous'}) joined group ${groupId}`);
       global.clientManager.createClient(groupId);
+
+      // Track online user
+      if (username) {
+        onlineUsers[socket.id] = { groupId, username };
+        sendOnlineUsersList(groupId);
+      }
+
+      // Internal Chat Handler
+      socket.on("send_internal_message", async (msgPayload) => {
+        try {
+          const { userId, username: senderName, body } = msgPayload;
+          const user = await User.findById(userId);
+          if (user && user.groupId === groupId) {
+            const msg = new InternalMessage({
+                groupId,
+                senderId: userId,
+                senderName,
+                body
+            });
+            await msg.save();
+            io.to(groupId).emit("new_internal_message", msg);
+          }
+        } catch (err) {
+            console.error("Internal Message Error:", err.message);
+        }
+      });
     });
+
+    socket.on("disconnect", () => {
+      const user = onlineUsers[socket.id];
+      if (user) {
+        const { groupId } = user;
+        delete onlineUsers[socket.id];
+        sendOnlineUsersList(groupId);
+      }
+      console.log("User disconnected:", socket.id);
+    });
+
+    function sendOnlineUsersList(groupId) {
+      const usersInGroup = Object.values(onlineUsers)
+        .filter(u => u.groupId === groupId)
+        .map(u => u.username);
+      
+      // Remove duplicates (same user on multiple tabs)
+      const uniqueUsers = [...new Set(usersInGroup)];
+      io.to(groupId).emit("group_online_users", uniqueUsers);
+    }
   });
 
   app.use(cors());
@@ -253,12 +311,16 @@ mongoose.connect(MONGODB_URI).then(async () => {
   const authRoute = require("./components/auth");
   const contactRoute = require("./components/contact");
   const settingsRoute = require("./components/settings");
+  const folderRoute = require("./components/folder");
+  const internalRoute = require("./components/internal");
 
   app.use("/chat", chatRoute);
   app.use("/group", groupRoute);
   app.use("/auth", authRoute);
   app.use("/contact", contactRoute);
   app.use("/settings", settingsRoute);
+  app.use("/folder", folderRoute);
+  app.use("/internal", internalRoute);
 
   const port = process.env.PORT || config.port;
   server.listen(port, () => {

@@ -16,11 +16,51 @@ function App() {
   const [authStatus, setAuthStatus] = useState('Initializing...');
   const [presence, setPresence] = useState({});
   const [broadcasts, setBroadcasts] = useState({});
+  const [internalMessages, setInternalMessages] = useState([]);
+  const [internalUnreadCount, setInternalUnreadCount] = useState(0);
+  const [groupOnlineUsers, setGroupOnlineUsers] = useState([]);
   const socketRef = useRef(null);
+  const activeChatRef = useRef(null);
+
+  // Sync ref with state
+  useEffect(() => {
+    activeChatRef.current = activeChat;
+  }, [activeChat]);
 
   const handleLoginSuccess = (newToken, newUser) => {
     setToken(newToken);
     setUser(newUser);
+  };
+
+  const handleSwitchSuccess = (newToken, newUser) => {
+    setToken(newToken);
+    setUser(newUser);
+    // Reset group-specific state to avoid showing stale data
+    setIsWaAuthenticated(false);
+    setChats([]);
+    setActiveChat(null);
+    setQrCode(null);
+    setWhatsappInfo(null);
+    setAuthStatus('Switching group...');
+
+    // Update storage
+    localStorage.setItem('token', newToken);
+    localStorage.setItem('user', JSON.stringify(newUser));
+    setInternalMessages([]);
+    setInternalUnreadCount(0);
+
+    // Force context re-fetch for new group
+    api.get('/auth/status').then(({ data }) => {
+      setIsWaAuthenticated(data.authenticated);
+      if (data.info) setWhatsappInfo(data.info);
+      if (data.authenticated) {
+        fetchChats();
+        fetchBroadcasts();
+      } else {
+        fetchQRData();
+      }
+      fetchInternalHistory();
+    });
   };
 
   const [whatsappInfo, setWhatsappInfo] = useState(null);
@@ -65,27 +105,36 @@ function App() {
     }
   };
 
-  const handleLogout = () => {
-    if (window.confirm('Are you sure you want to sign out?')) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      window.location.reload();
+  const fetchInternalHistory = async (limit = 50) => {
+    try {
+      const { data } = await api.get(`/internal/history?limit=${limit}`);
+      if (data.status === "success") {
+        setInternalMessages(data.messages);
+      }
+    } catch (err) {
+      console.error('Error fetching internal history:', err);
     }
   };
 
+  const handleLogout = () => {
+    console.log('handleLogout called - bypassing confirm');
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    window.location.reload();
+  };
+
   const handleWaLogout = async () => {
-    if (window.confirm('Are you sure you want to logout from WhatsApp? This will clear all session data for your group.')) {
-        try {
-            const { data } = await api.post('/auth/logout');
-            if (data.status === 'success') {
-                setIsWaAuthenticated(false);
-                setQrCode(null);
-                setWhatsappInfo(null);
-                fetchQRData();
-            }
-        } catch (err) {
-            alert('WhatsApp logout failed: ' + err.message);
-        }
+    console.log('handleWaLogout called - bypassing confirm');
+    try {
+      const { data } = await api.post('/auth/logout');
+      if (data.status === 'success') {
+        setIsWaAuthenticated(false);
+        setQrCode(null);
+        setWhatsappInfo(null);
+        fetchQRData();
+      }
+    } catch (err) {
+      alert('WhatsApp logout failed: ' + err.message);
     }
   }
 
@@ -103,6 +152,7 @@ function App() {
         fetchChats();
         fetchBroadcasts();
       }
+      fetchInternalHistory();
     }).catch(err => {
       console.error('Auth check failed:', err);
       setAuthStatus('Error checking authentication status.');
@@ -114,7 +164,7 @@ function App() {
       socketRef.current.on('connect', () => {
         if (user && user.groupId) {
           console.log('Connected to socket, joining room:', user.groupId);
-          socketRef.current.emit('join_group', user.groupId);
+          socketRef.current.emit('join_group', { groupId: user.groupId, username: user.username });
         } else {
           console.warn('Socket connected but no valid groupId found for user');
         }
@@ -152,14 +202,15 @@ function App() {
           const currentChats = [...prev];
           const chatId = msg.fromMe ? msg.to : msg.from;
           const chatIdx = currentChats.findIndex(c => c.id === chatId);
-          
+
           if (chatIdx > -1) {
             const chat = { ...currentChats[chatIdx] };
             chat.lastMessage = msg;
-            if (!msg.fromMe && (!activeChat || activeChat.id !== msg.from)) {
+            const currentActiveChat = activeChatRef.current;
+            if (!msg.fromMe && (!currentActiveChat || currentActiveChat.id !== msg.from)) {
               chat.unreadCount = (chat.unreadCount || 0) + 1;
-            } else if (!msg.fromMe && activeChat && activeChat.id === msg.from) {
-              api.post(`/chat/seen/${activeChat.id}`);
+            } else if (!msg.fromMe && currentActiveChat && currentActiveChat.id === msg.from) {
+              api.post(`/chat/seen/${currentActiveChat.id}`);
             }
             currentChats.splice(chatIdx, 1);
             currentChats.unshift(chat);
@@ -173,6 +224,31 @@ function App() {
 
       socketRef.current.on('presence_update', (data) => {
         setPresence(prev => ({ ...prev, [data.id]: data.state }));
+      });
+
+      socketRef.current.on('folders_updated', (folders) => {
+        // We'll let the Sidebar component handle its own internal refreshes 
+        // to simplify prop drilling, but we could also store it here.
+        // For now, let's just trigger a custom event that Sidebar can listen to.
+        window.dispatchEvent(new CustomEvent('folders_updated', { detail: folders }));
+      });
+
+      socketRef.current.on('new_internal_message', (msg) => {
+        setInternalMessages(prev => {
+          if (prev.find(m => m._id === msg._id)) return prev;
+
+          const currentActiveChat = activeChatRef.current;
+          // Increment unread if chat is not active and message is from someone else
+          if ((!currentActiveChat || currentActiveChat.id !== 'internal_group_chat') && msg.senderId !== user.userId) {
+            setInternalUnreadCount(u => u + 1);
+          }
+
+          return [...prev, msg];
+        });
+      });
+
+      socketRef.current.on('group_online_users', (users) => {
+        setGroupOnlineUsers(users);
       });
 
       socketRef.current.on('disconnected', () => {
@@ -195,7 +271,7 @@ function App() {
       }
       clearInterval(interval);
     };
-  }, [token, user, isWaAuthenticated, activeChat]);
+  }, [token, user, isWaAuthenticated]);
 
   if (!token || !user) {
     return <LoginPage onLoginSuccess={handleLoginSuccess} />;
@@ -204,7 +280,7 @@ function App() {
   return (
     <div className={`app-container ${activeChat ? 'chat-active' : ''}`}>
       {!isWaAuthenticated && (
-        <AuthOverlay qrCode={qrCode} status={authStatus} />
+        <AuthOverlay qrCode={qrCode} status={authStatus} user={user} onLogout={handleLogout} onSwitchSuccess={handleSwitchSuccess} />
       )}
       <Sidebar
         user={user}
@@ -219,7 +295,14 @@ function App() {
         }}
         onLogout={handleLogout}
         onWaLogout={handleWaLogout}
+        onSwitchSuccess={handleSwitchSuccess}
         onChatsUpdate={fetchChats}
+        onInternalChatSelect={(limit = 50) => {
+          fetchInternalHistory(limit);
+          setInternalUnreadCount(0);
+        }}
+        internalMessages={internalMessages}
+        internalUnreadCount={internalUnreadCount}
         presence={presence}
         broadcasts={broadcasts}
       />
@@ -235,6 +318,10 @@ function App() {
           }
         }}
         socket={socketRef.current}
+        user={user}
+        internalMessages={internalMessages}
+        onInternalLoadMore={fetchInternalHistory}
+        groupOnlineUsers={groupOnlineUsers}
       />
     </div>
   );
