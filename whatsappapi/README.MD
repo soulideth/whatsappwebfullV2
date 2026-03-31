@@ -1,11 +1,4 @@
 
-# whatsapp-node-api 
-
-  
-
-## [](https://github.com/pranavms13/whatsapp-node-api#technologies)💻 Technologies
-
-  
 
 -  [NodeJS](https://nodejs.org/en/)
 

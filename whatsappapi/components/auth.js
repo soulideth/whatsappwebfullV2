@@ -38,6 +38,7 @@ router.post("/register", async (req, res) => {
       username,
       password,
       groupId,
+      groupIds: [groupId], // Initialize with the primary group
     });
 
     await user.save();
@@ -46,6 +47,7 @@ router.post("/register", async (req, res) => {
       userId: user._id,
       username: user.username,
       groupId: user.groupId,
+      groupIds: user.groupIds,
     };
 
     jwt.sign(
@@ -77,10 +79,76 @@ router.post("/login", async (req, res) => {
       return res.status(400).json({ status: "error", message: "Invalid credentials" });
     }
 
+    // Sync groupIds: Ensure active groupId is in the list
+    if (!user.groupIds.includes(user.groupId)) {
+        user.groupIds.push(user.groupId);
+        await user.save();
+    }
+
+    const groupIdsSet = new Set(user.groupIds || []);
+    groupIdsSet.add(user.groupId);
+
     const payload = {
       userId: user._id,
       username: user.username,
       groupId: user.groupId,
+      groupIds: Array.from(groupIdsSet),
+    };
+
+    jwt.sign(
+      payload,
+      config.jwt_secret || "secret",
+      { expiresIn: "7d" },
+      (err, token) => {
+        if (err) throw err;
+        res.json({ status: "success", token, user: payload });
+      }
+    );
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).send("Server error");
+  }
+});
+
+router.post("/switch-group", authMiddleware, async (req, res) => {
+  try {
+    const { groupId } = req.body;
+    const user = await User.findById(req.user.userId);
+
+    if (!user) {
+      return res.status(404).json({ status: "error", message: "User not found" });
+    }
+
+    // Capture old group to ensure it stays authorized
+    const oldGroupId = user.groupId;
+
+    // Check if user belongs to the group
+    const hasAccess = user.groupId === groupId || (user.groupIds && user.groupIds.includes(groupId));
+    if (!hasAccess) {
+      const msg = `Access denied to group ${groupId}. You currently belong to ${user.groupId}. Authorized: ${user.groupIds.join(', ') || 'none'}`;
+      console.warn(`[switch-group] ${msg}`);
+      return res.status(403).json({ status: "error", message: msg });
+    }
+
+    // Update active group and ensure historic groups are saved
+    user.groupId = groupId;
+    if (!user.groupIds.includes(oldGroupId)) {
+        user.groupIds.push(oldGroupId);
+    }
+    // Also ensure new group is in list (just in case)
+    if (!user.groupIds.includes(groupId)) {
+        user.groupIds.push(groupId);
+    }
+    await user.save();
+
+    const groupIdsSet = new Set(user.groupIds || []);
+    groupIdsSet.add(user.groupId);
+
+    const payload = {
+      userId: user._id,
+      username: user.username,
+      groupId: user.groupId,
+      groupIds: Array.from(groupIdsSet),
     };
 
     jwt.sign(

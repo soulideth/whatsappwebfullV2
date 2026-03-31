@@ -1,5 +1,6 @@
 const router = require("express").Router();
 const Group = require("../models/Group");
+const User = require("../models/User");
 const authMiddleware = require("../middleware/authMiddleware");
 
 router.use(authMiddleware);
@@ -27,6 +28,28 @@ router.post("/group", async (req, res) => {
         if (!group) return res.status(404).json({ status: "error", message: "Group not found" });
         
         res.json({ status: "success", message: "Settings updated", isOnlineEnabled: group.isOnlineEnabled });
+    } catch (err) {
+        res.status(500).json({ status: "error", message: err.message });
+    }
+});
+
+// Get info for all user groups
+router.get("/groups", async (req, res) => {
+    try {
+        const user = await User.findById(req.user.userId);
+        if (!user) return res.status(404).json({ status: "error", message: "User not found" });
+
+        const ids = new Set(user.groupIds || []);
+        ids.add(user.groupId); // Ensure active group is always in the list
+        const groups = await Group.find({ groupId: { $in: Array.from(ids) } });
+        
+        const result = groups.map(g => ({
+            groupId: g.groupId,
+            name: g.name,
+            isOnlineEnabled: g.isOnlineEnabled
+        }));
+
+        res.json({ status: "success", groups: result });
     } catch (err) {
         res.status(500).json({ status: "error", message: err.message });
     }
